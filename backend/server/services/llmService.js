@@ -481,32 +481,41 @@ Supported types: "bar", "line", "pie", "scatter".
 Rules:
 1. "labels": Array of strings for the X-axis (or pie segments).
 2. "datasets": Array of objects with "label" and "data" (numbers).
-3. If the request is vague, pick the best visualization.
-4. Respond ONLY with valid JSON.
-Example JSON Structure:
-{
-  "type": "bar",
-  "title": "Sales by Region",
-  "labels": ["North", "South", "East"],
-  "datasets": [
-    {
-      "label": "Revenue",
-      "data": [12000, 9000, 15000]
-    }
-  ]
-}
-`;
+3. "xAxisColumn": The EXACT name of the column used for labels.
+4. "yAxisColumn": The EXACT name of the column used for values.
+5. If the request is vague, pick the best visualization.
+6. Respond ONLY with valid JSON. Do not include markdown formatting like \`\`\`json.
+        Example JSON Structure:
+          {
+            "type": "bar",
+            "title": "Sales by Region",
+            "xAxisColumn": "Region",
+            "yAxisColumn": "Revenue",
+            "labels": ["North", "South", "East"],
+            "datasets": [
+              {
+                "label": "Revenue",
+                "data": [12000, 9000, 15000]
+              }
+            ]
+          }
+      `;
       const result = await this.model.generateContent(prompt);
       const text = result.response.text();
 
-      // Extract JSON from response (robust method)
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        console.error("No JSON found in response:", text);
+      // Clean cleanup of potential markdown
+      let cleanText = text.replace(/```json /g, '').replace(/```/g, '').trim();
+
+      // Find the first opening brace and last closing brace
+      const firstBrace = cleanText.indexOf('{');
+      const lastBrace = cleanText.lastIndexOf('}');
+
+      if (firstBrace === -1 || lastBrace === -1) {
+        console.error("No JSON structure found:", text);
         return null;
       }
-
-      const jsonStr = jsonMatch[0];
+      
+      const jsonStr = cleanText.substring(firstBrace, lastBrace + 1);
       return JSON.parse(jsonStr);
     } catch (error) {
       console.error("Chart Gen Error:", error);

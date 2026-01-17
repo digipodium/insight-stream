@@ -30,7 +30,7 @@ const ChatInterface = ({ onSendMessage, messages, isLoading }) => {
   ];
 
   return (
-    <div className="bg-white rounded-lg shadow-md flex flex-col h-[600px]">
+    <div className="bg-white rounded-lg shadow-md flex flex-col h-[750px]">
       {/* Header */}
       <div className="p-4 border-b border-gray-200">
         <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
@@ -83,6 +83,7 @@ const ChatInterface = ({ onSendMessage, messages, isLoading }) => {
                 >
                   <p className="text-sm whitespace-pre-wrap">{message.content}</p>
 
+                  {/* Render Chart if present */}
                   {/* Render Chart if present */}
                   {message.chartConfig && (
                     <div className="mt-3 w-full bg-white rounded p-2">

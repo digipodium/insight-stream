@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import DataTable from '../components/DataTable';
 import ChartGenerator from '../components/ChartGenerator';
 import { Table as TableIcon, BarChart2 } from 'lucide-react';
@@ -38,6 +38,9 @@ const Dashboard = () => {
   const [searchFocused, setSearchFocused] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const { state: dataHistory, setState: saveToHistory, undo, redo, canUndo, canRedo } = useUndoRedo(currentDataset?.info.preview || []);
+
+  // Track last processed data ID to prevent duplicate auto-insights
+  const lastProcessedDataId = useRef(null);
   useKeyboardShortcuts([
     {
       key: 's',
@@ -150,12 +153,14 @@ const Dashboard = () => {
         response = await dataAPI.processCommand(currentDataset.dataId, message);
 
         if (response.success) {
-          // Update dataset with new row count
+          // Update dataset with new result
           setCurrentDataset(prev => ({
             ...prev,
             info: {
               ...prev.info,
-              rowCount: response.result.rowsAfter,
+              rowCount: response.result?.rowsAfter ?? prev.info.rowCount,
+              headers: response.result?.headers ?? prev.info.headers,
+              preview: response.result?.preview ?? response.preview ?? prev.info.preview
             },
           }));
 
@@ -275,6 +280,7 @@ const Dashboard = () => {
     }
   };
 
+
   // Handle reset button
   const handleReset = () => {
     if (window.confirm('Are you sure you want to reset? All data will be lost.')) {
@@ -308,6 +314,19 @@ const Dashboard = () => {
   const handleRowDelete = (rowIndex) => {
     showAlert('success', `Row ${rowIndex + 1} deleted`);
   };
+
+  // Auto-generate insights when new dataset is loaded
+  useEffect(() => {
+    if (currentDataset?.dataId && currentDataset.dataId !== lastProcessedDataId.current) {
+      console.log('🤖 Auto-generating insights for new dataset:', currentDataset.dataId);
+      lastProcessedDataId.current = currentDataset.dataId;
+
+      // Small delay to ensure UI is ready and feels natural
+      setTimeout(() => {
+        handleGetInsights();
+      }, 1000);
+    }
+  }, [currentDataset?.dataId]);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors">
@@ -456,9 +475,9 @@ const Dashboard = () => {
             </div>
 
             {/* Content Area */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Main Content - 2/3 width */}
-              <div className="lg:col-span-2">
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+              {/* Main Content - 3/5 width (60%) */}
+              <div className="lg:col-span-3">
                 {activeView === 'preview' && (
                   <DataPreview
                     data={currentDataset.info}
@@ -487,8 +506,8 @@ const Dashboard = () => {
                 )}
               </div>
 
-              {/* Chat Interface - 1/3 width */}
-              <div className="lg:col-span-1">
+              {/* Chat Interface - 2/5 width (40%) */}
+              <div className="lg:col-span-2">
                 <ChatInterface
                   onSendMessage={handleSendMessage}
                   messages={chatHistory}
