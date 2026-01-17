@@ -4,9 +4,14 @@ const express = require('express');
 const cors = require('cors');
 
 const llmRoutes = require('./routes/llmRoutes');
-const dataRoutes = require('./routes/dataRoutes')
+const dataRoutes = require('./routes/dataRoutes');
+const authRoutes = require('./routes/authRoutes');
+const connectDB = require('./config/db');
 
 const app = express();
+
+// Connect to Database
+connectDB();
 
 // Middleware
 app.use(cors());
@@ -16,6 +21,7 @@ app.use(express.urlencoded({ extended: true }));
 // Routes
 app.use('/api/llm', llmRoutes);
 app.use('/api/data', dataRoutes);
+app.use('/api/auth', authRoutes);
 
 // Test route
 app.get('/', (req, res) => {
