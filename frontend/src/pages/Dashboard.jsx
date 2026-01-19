@@ -1,16 +1,17 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useContext } from 'react';
 import DataTable from '../components/DataTable';
 import ChartGenerator from '../components/ChartGenerator';
 import { Table as TableIcon, BarChart2 } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { dataAPI } from '../services/api';
+import AuthContext from '../context/AuthContext';
 import FileUpload from '../components/FileUpload';
 import DataPreview from '../components/DataPreview';
 import ChatInterface from '../components/ChatInterface';
 import ActionButtons from '../components/ActionButtons';
 import StatisticsCard from '../components/StatisticsCard';
 import Alert from '../components/Alert';
-import { Database, Columns, CheckCircle } from 'lucide-react';
+import { Database, Columns, CheckCircle, LogOut } from 'lucide-react';
 import useKeyboardShortcuts from '../hooks/useKeyboardShortcuts';
 import KeyboardShortcutsPanel from '../components/KeyboardShortcutsPanel';
 import { TableSkeleton, CardSkeleton } from '../components/LoadingSkeleton';
@@ -22,6 +23,7 @@ import useUndoRedo from '../hooks/useUndoRedo';
 import { useTheme } from '../context/ThemeContext';
 
 const Dashboard = () => {
+  const { logout } = useContext(AuthContext);
   const {
     currentDataset,
     setCurrentDataset,
@@ -349,6 +351,14 @@ const Dashboard = () => {
                 />
               )}
               <DarkModeToggle />
+              <button
+                onClick={logout}
+                className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                title="Logout"
+              >
+                <LogOut className="w-4 h-4" />
+                <span className="hidden sm:inline">Logout</span>
+              </button>
             </div>
           </div>
         </div>

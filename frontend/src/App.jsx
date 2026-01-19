@@ -14,17 +14,15 @@ const ProtectedRoute = ({ children }) => {
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center bg-gray-900 text-white">Loading...</div>;
   }
-
   if (!user) {
     return <Navigate to="/login" />;
   }
-
   return children;
 };
 
 function App() {
   return (
-    <ThemeProvider> // ThemeProvider should wrap everything
+    <ThemeProvider> 
       <AuthProvider>
         <DataProvider>
           <Router>
