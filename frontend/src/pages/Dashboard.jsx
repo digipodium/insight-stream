@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useContext } from 'react';
 import DataTable from '../components/DataTable';
 import ChartGenerator from '../components/ChartGenerator';
-import { Table as TableIcon, BarChart2 } from 'lucide-react';
+import HistoryPanel from '../components/HistoryPanel';
+import { Table as TableIcon, BarChart2, History } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { dataAPI } from '../services/api';
 import AuthContext from '../context/AuthContext';
@@ -23,7 +24,7 @@ import useUndoRedo from '../hooks/useUndoRedo';
 import { useTheme } from '../context/ThemeContext';
 
 const Dashboard = () => {
-  const { logout } = useContext(AuthContext);
+  const { logout, user } = useContext(AuthContext);
   const {
     currentDataset,
     setCurrentDataset,
@@ -39,6 +40,7 @@ const Dashboard = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const { state: dataHistory, setState: saveToHistory, undo, redo, canUndo, canRedo } = useUndoRedo(currentDataset?.info.preview || []);
 
   // Track last processed data ID to prevent duplicate auto-insights
@@ -317,6 +319,30 @@ const Dashboard = () => {
     showAlert('success', `Row ${rowIndex + 1} deleted`);
   };
 
+  // Handle loading dataset from history
+  const handleLoadDataset = async (datasetId) => {
+    setIsProcessing(true);
+    setShowHistory(false);
+    try {
+      const response = await dataAPI.getDataset(datasetId);
+      if (response.success) {
+        setCurrentDataset(response);
+        showAlert('success', `Loaded "${response.info.fileName}" successfully!`);
+
+        // Add welcome message
+        addMessage({
+          role: 'assistant',
+          content: `I've retrieved "${response.info.fileName}" from your history. Ready to continue analysis!`,
+        });
+      }
+    } catch (error) {
+      console.error('Load history error:', error);
+      showAlert('error', 'Failed to load dataset from history');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   // Auto-generate insights when new dataset is loaded
   useEffect(() => {
     if (currentDataset?.dataId && currentDataset.dataId !== lastProcessedDataId.current) {
@@ -340,8 +366,20 @@ const Dashboard = () => {
                 InsightStream
               </h1>
               <InfoTooltip text="AI-powered data analysis platform" />
+              {user && (
+                <span className="hidden md:inline-block ml-4 text-sm font-medium text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-3 py-1 rounded-full border border-gray-200 dark:border-gray-600">
+                  Welcome, {user.name}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-4">
+              <button
+                onClick={() => setShowHistory(true)}
+                className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors"
+              >
+                <History className="w-4 h-4" />
+                <span className="hidden sm:inline">My History</span>
+              </button>
               {currentDataset && (
                 <UndoRedoControls
                   onUndo={undo}
@@ -365,7 +403,12 @@ const Dashboard = () => {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {isUploading ? (
+        {showHistory ? (
+          <HistoryPanel
+            onLoadDataset={handleLoadDataset}
+            onClose={() => setShowHistory(false)}
+          />
+        ) : isUploading ? (
           <>
             <CardSkeleton />
             <div className="mt-6">
@@ -384,6 +427,16 @@ const Dashboard = () => {
               </p>
             </div>
             <FileUpload onFileUpload={handleFileUpload} isUploading={isUploading} />
+
+            <div className="text-center mt-8">
+              <button
+                onClick={() => setShowHistory(true)}
+                className="text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 font-medium text-sm flex items-center justify-center gap-2 mx-auto transition-colors"
+              >
+                <History className="w-4 h-4" />
+                Or continue working on a previous dataset
+              </button>
+            </div>
           </div>
         ) : (
           <>

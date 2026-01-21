@@ -10,6 +10,15 @@ const api = axios.create({
   },
 });
 
+// Add interceptor to include token
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 // Data API endpoints
 export const dataAPI = {
   // Upload CSV file
@@ -57,6 +66,18 @@ export const dataAPI = {
     const response = await api.post('/data/insights', {
       dataId,
     });
+    return response.data;
+  },
+
+  // Get User History
+  getHistory: async () => {
+    const response = await api.get('/data/history');
+    return response.data;
+  },
+
+  // Get Specific Dataset
+  getDataset: async (id) => {
+    const response = await api.get(`/data/${id}`);
     return response.data;
   },
 
