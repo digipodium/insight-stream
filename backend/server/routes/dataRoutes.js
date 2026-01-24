@@ -17,6 +17,12 @@ router.post('/process', protect, dataController.processCommand);
 router.post('/insights', protect, dataController.getInsights);
 router.post('/ask', protect, dataController.askQuestion);
 router.post('/chart', protect, dataController.generateChart);
+router.post('/formula', protect, dataController.generateFormula);
+router.post('/manipulate', protect, dataController.manipulateColumn);
+router.post('/validate', protect, dataController.generateValidationRules);
+router.post('/relationships', protect, dataController.detectRelationships);
+router.post('/quality', protect, dataController.getQualityScore);
+router.post('/anomalies', protect, dataController.detectAnomalies);
 router.get('/download/:dataId', protect, dataController.downloadData);
 
 module.exports = router;
