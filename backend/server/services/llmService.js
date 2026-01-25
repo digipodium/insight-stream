@@ -1,252 +1,179 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
+// Simple in-memory cache with TTL
+class SimpleCache {
+  constructor(ttlSeconds = 300) { // Default 5 minutes
+    this.cache = new Map();
+    this.ttl = ttlSeconds * 1000;
+  }
+
+  get(key) {
+    if (!this.cache.has(key)) return null;
+    const item = this.cache.get(key);
+    if (Date.now() > item.expiry) {
+      this.cache.delete(key);
+      return null;
+    }
+    return item.value;
+  }
+
+  set(key, value) {
+    this.cache.set(key, {
+      value,
+      expiry: Date.now() + this.ttl
+    });
+  }
+
+  clear() {
+    this.cache.clear();
+  }
+}
+
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 class LLMService {
   constructor() {
-    this.model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    // Optimization: Limit output tokens to reduce cost/usage
+    this.model = genAI.getGenerativeModel({
+      model: 'gemini-2.5-flash',
+      generationConfig: {
+        maxOutputTokens: 1024, // Limit response size
+        temperature: 0.7,
+      }
+    });
+    this.cache = new SimpleCache(600); // 10 minutes cache
   }
 
   /**
-   * Simple rule-based command parser (fallback when AI fails)
+   * Local regex-based command parser.
+   * Returns null if it cannot confidently parse the command, signaling "Ask AI".
    */
-  parseCommandFallback(command) {
+  parseCommandLocal(command) {
     const lowerCommand = command.toLowerCase().trim();
 
-    // Clean/cleanup commands
+    // 1. Clean/Cleanup
     if (lowerCommand.includes('clean') || lowerCommand.includes('cleanup')) {
       return {
         operation: 'clean',
         parameters: {},
-        explanation: 'Will remove duplicates, handle missing values, and standardize formats'
+        explanation: 'Standardizing formats, removing duplicates, and handling missing values (Local Rule).'
       };
     }
 
-    // Remove duplicates
+    // 2. Remove Duplicates
     if (lowerCommand.includes('duplicate') || lowerCommand.includes('remove duplicate')) {
       return {
         operation: 'remove_duplicates',
         parameters: {},
-        explanation: 'Will remove duplicate rows from the dataset'
+        explanation: 'Removing duplicate rows (Local Rule).'
       };
     }
 
-    // Fill/handle missing values
-    if (lowerCommand.includes('fill') || lowerCommand.includes('missing') || lowerCommand.includes('null')) {
+    // 3. Handle Missing
+    if (lowerCommand.includes('fill') && (lowerCommand.includes('missing') || lowerCommand.includes('null'))) {
       return {
         operation: 'fill_missing',
         parameters: {},
-        explanation: 'Will fill missing values with appropriate defaults (mean for numbers, mode for categories)'
+        explanation: 'Filling missing values with defaults (Local Rule).'
       };
     }
 
-    // Remove outliers
-    if (lowerCommand.includes('outlier')) {
+    // 4. Remove Outliers
+    if (lowerCommand.includes('remove') && lowerCommand.includes('outlier')) {
       return {
         operation: 'remove_outliers',
         parameters: {},
-        explanation: 'Will remove statistical outliers using the IQR method'
+        explanation: 'Removing statistical outliers using IQR (Local Rule).'
       };
     }
 
-    // Standardize
+    // 5. Standardize
     if (lowerCommand.includes('standardize') || lowerCommand.includes('format')) {
       return {
         operation: 'standardize',
         parameters: {},
-        explanation: 'Will standardize text formats and remove extra whitespace'
+        explanation: 'Standardizing text formats (Local Rule).'
       };
     }
 
-    // Analyze
-    if (lowerCommand.includes('analyze') || lowerCommand.includes('stats') || lowerCommand.includes('statistics')) {
-      return {
-        operation: 'analyze',
-        parameters: {},
-        explanation: 'Will show statistical analysis of the dataset'
-      };
-    }
+    // 6. Simple Filter: "remove rows where age > 25"
+    if ((lowerCommand.includes('remove') || lowerCommand.includes('delete')) &&
+      (lowerCommand.includes('row') || lowerCommand.includes('where'))) {
 
-    // Filter/Remove rows - parse conditions from command text
-    if ((lowerCommand.includes('remove') || lowerCommand.includes('delete')) && 
-        (lowerCommand.includes('row') || lowerCommand.includes('rows') || lowerCommand.includes('where'))) {
-      
-      const conditions = [];
-      
-      // Parse "age greater than X" or "age > X" or "age > X"
-      const agePatterns = [
-        /age\s+(?:greater\s+than|>|gt|more\s+than|above)\s+(\d+)/i,
-        /age\s+(?:less\s+than|<|lt|below|under)\s+(\d+)/i,
-        /age\s+(?:equal\s+to|==|=|is)\s+(\d+)/i,
-        /age\s+(?:greater\s+than\s+or\s+equal|>=|gte)\s+(\d+)/i,
-        /age\s+(?:less\s+than\s+or\s+equal|<=|lte)\s+(\d+)/i,
-        /customer'?s?\s+age\s+(?:greater\s+than|>|gt|more\s+than|above)\s+(\d+)/i,
-        /customer'?s?\s+age\s+(?:less\s+than|<|lt|below|under)\s+(\d+)/i
-      ];
-      
-      for (const pattern of agePatterns) {
-        const match = lowerCommand.match(pattern);
-        if (match) {
-          const value = parseInt(match[1]);
-          if (pattern.source.includes('greater') || pattern.source.includes('>') || pattern.source.includes('above') || pattern.source.includes('more')) {
-            conditions.push({
-              column: 'age',
-              operator: 'gt',
-              value: value,
-              valueType: 'number'
-            });
-            break;
-          } else if (pattern.source.includes('less') || pattern.source.includes('<') || pattern.source.includes('below') || pattern.source.includes('under')) {
-            conditions.push({
-              column: 'age',
-              operator: 'lt',
-              value: value,
-              valueType: 'number'
-            });
-            break;
-          } else if (pattern.source.includes('equal') || pattern.source.includes('==') || pattern.source.includes('is')) {
-            conditions.push({
-              column: 'age',
-              operator: 'eq',
-              value: value,
-              valueType: 'number'
-            });
-            break;
-          } else if (pattern.source.includes('>=') || pattern.source.includes('gte')) {
-            conditions.push({
-              column: 'age',
-              operator: 'gte',
-              value: value,
-              valueType: 'number'
-            });
-            break;
-          } else if (pattern.source.includes('<=') || pattern.source.includes('lte')) {
-            conditions.push({
-              column: 'age',
-              operator: 'lte',
-              value: value,
-              valueType: 'number'
-            });
-            break;
-          }
-        }
-      }
-      
-      // Parse customer IDs (e.g., "customerid 102, 106, 108")
-      const idPattern = /(?:customerid|customer\s+id|id)\s+(\d+(?:\s*,\s*\d+)*)/i;
-      const idMatch = lowerCommand.match(idPattern);
-      if (idMatch) {
-        const ids = idMatch[1].split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
-        if (ids.length > 0) {
-          conditions.push({
-            column: 'customerid',
-            operator: 'in',
-            value: ids,
-            valueType: 'array'
-          });
-        }
-      }
-      
-      // Parse gender (male/female)
-      if (lowerCommand.includes('male') && !lowerCommand.includes('female')) {
-        conditions.push({
-          column: 'gender',
-          operator: 'eq',
-          value: 'male',
-          valueType: 'string'
-        });
-      } else if (lowerCommand.includes('female')) {
-        conditions.push({
-          column: 'gender',
-          operator: 'eq',
-          value: 'female',
-          valueType: 'string'
-        });
-      }
-      
-      // Parse odd/even
-      if (lowerCommand.includes('odd')) {
-        const idColMatch = lowerCommand.match(/(customerid|customer\s+id|id)/i);
-        conditions.push({
-          column: idColMatch ? 'customerid' : 'id',
-          operator: 'odd',
-          value: null,
-          valueType: 'number'
-        });
-      } else if (lowerCommand.includes('even')) {
-        const idColMatch = lowerCommand.match(/(customerid|customer\s+id|id)/i);
-        conditions.push({
-          column: idColMatch ? 'customerid' : 'id',
-          operator: 'even',
-          value: null,
-          valueType: 'number'
-        });
-      }
-      
-      // Generic pattern: "column > value" or "column greater than value"
-      if (conditions.length === 0) {
-        // Try to extract column name and comparison
-        const genericPattern = /(\w+)\s+(?:greater\s+than|>|gt|more\s+than|above)\s+(\d+)/i;
-        const genericMatch = lowerCommand.match(genericPattern);
-        if (genericMatch) {
-          conditions.push({
-            column: genericMatch[1],
-            operator: 'gt',
-            value: parseInt(genericMatch[2]),
-            valueType: 'number'
-          });
-        }
-      }
-      
-      if (conditions.length > 0) {
+      // Attempt to parse simple "column operator value" patterns
+      // We will only handle the most obvious cases locally to avoid errors.
+      // Complex cases will fall through to null -> AI.
+
+      // Pattern: column > value
+      const simplePattern = /(\w+)\s+(>|<|=|==|!=|>=|<=)\s+(\d+)/;
+      const match = lowerCommand.match(simplePattern);
+
+      if (match) {
+        const [_, col, op, val] = match;
+        // Map symbol to operator string if needed, or backend can handle symbols
+        const opMap = { '>': 'gt', '<': 'lt', '=': 'eq', '==': 'eq', '!=': 'ne', '>=': 'gte', '<=': 'lte' };
+
         return {
           operation: 'filter_rows',
           parameters: {
-            conditions: conditions,
+            conditions: [{
+              column: col,
+              operator: opMap[op] || op,
+              value: Number(val),
+              valueType: 'number'
+            }],
             logic: 'AND'
           },
-          explanation: `Will remove rows matching: ${conditions.map(c => `${c.column} ${c.operator} ${c.value || ''}`).join(', ')}`
+          explanation: `Locally parsed: Filter ${col} ${op} ${val}`
         };
       }
-      
-      // If we can't parse, still return filter_rows but with empty conditions
-      // The controller will handle this and show an error
-      return {
-        operation: 'filter_rows',
-        parameters: {
-          conditions: [],
-          logic: 'AND'
-        },
-        explanation: 'Filter operation detected but could not parse conditions from command'
-      };
     }
 
-    // Default
-    return {
-      operation: 'analyze',
-      parameters: {},
-      explanation: 'Command not recognized. Showing analysis instead.'
-    };
+    // If no specific rule matched, return null to let AI handle it
+    return null;
   }
 
-  // Suggested addition to LLMService class
-  async verifyConnection() {
-    try {
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-      const result = await model.generateContent("Hello");
-      console.log(result.response.text() + "✅ AI Service Connected Successfully");
-    } catch (error) {
-      console.error("❌ AI Service Connection Failed:", error.message);
-    }
+  // Helper to generate cache keys
+  _getCacheKey(prefix, ...args) {
+    return `${prefix}:${args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(':')}`;
   }
 
   /**
-   * Process natural language data commands with flexible execution
+   * Process natural language data commands with Local-First strategy
    */
   async processDataCommand(command, dataContext) {
     try {
+      console.log(`[LLM] Processing command: "${command}"`);
+
+      // 1. IMPROVEMENT: Try Local Parsing First
+      // This saves an API call for common operations
+      const localResult = this.parseCommandLocal(command);
+      if (localResult) {
+        console.log('[LLM] ⚡ Used Local Parser (No API Cost)');
+        return {
+          success: true,
+          command: {
+            type: 'operation', // Ensure consistency with AI response structure
+            ...localResult
+          },
+          usedFallback: false,
+          source: 'local'
+        };
+      }
+
+      // 2. IMPROVEMENT: Check Cache
+      // If we've seen this exact command for this dataset structure/size recently
+      const cacheKey = this._getCacheKey('cmd', command, dataContext.columns, dataContext.rowCount);
+      const cached = this.cache.get(cacheKey);
+      if (cached) {
+        console.log('[LLM] 📦 Used Cached AI Response');
+        return cached;
+      }
+
+      // 3. Call AI (Only if necessary)
+      console.log('[LLM] 🤖 Calling Gemini API...');
       const prompt = `
-You are an advanced data processing assistant. Analyze the user's command and determine the best way to execute it.
+You are a data processing assistant. Analyze the user's command and determine the best way to execute it.
 
 Dataset Information:
 - Available Columns: ${dataContext.columns.join(', ')}
@@ -255,29 +182,21 @@ Dataset Information:
 
 User Command: "${command}"
 
-Your task is to understand what the user wants and create an execution plan. You have three options:
+Respones Types:
+1. "operation": for standard tools (remove_rows, remove_duplicates, fill_missing, remove_outliers, standardize, clean, analyze)
+2. "code": custom JS code using "data" array.
+3. "chain": list of operations.
 
-1. **Use existing operation** - If the command matches a standard operation, use it
-2. **Generate custom code** - If the command requires custom logic, generate JavaScript code
-3. **Chain operations** - If the command requires multiple steps, create a chain
-
-Response Format:
+Response Format (JSON ONLY):
 {
   "type": "operation" | "code" | "chain",
-  "explanation": "what will be done",
-  ... (type-specific fields below)
-}
-
-**Type: "operation"** - For standard operations:
-{
-  "type": "operation",
-  "operation": "filter_rows" | "remove_duplicates" | "fill_missing" | "remove_outliers" | "standardize" | "clean" | "analyze",
-  "parameters": { ... operation-specific parameters ... },
-  "explanation": "..."
+  "operation": "tool_name", 
+  "parameters": { ... },
+  "explanation": "concise description"
 }
 
 Standard Operations:
-- "filter_rows": Remove rows based on conditions
+- "remove_rows": DELETE rows that match the condition. (e.g. to keep males, remove females).
   Parameters: { "conditions": [...], "logic": "AND"|"OR" }
 - "remove_duplicates": Remove duplicate rows
 - "fill_missing": Fill missing values
@@ -314,61 +233,58 @@ Code Requirements:
 IMPORTANT Rules:
 1. Match column names from available columns EXACTLY (case-sensitive)
 2. Handle variations: "customer's age" → find "age" or "customerAge" in columns
-3. For filter_rows: Use operators: gt, lt, eq, ne, gte, lte, in, not_in, contains, odd, even, date_after, date_before
-4. If unsure, prefer "code" type for flexibility
-5. For complex operations, use "chain" type
+3. For remove_rows/filter: Use operators: gt, lt, eq, ne, gte, lte, in, not_in, contains, odd, even, date_after, date_before
+4. To "Keep Only X": use remove_rows with condition "NOT X" (e.g. keep males -> remove gender != male)
+5. If unsure, prefer "code" type for flexibility
+6. For complex operations, use "chain" type
 
 Examples:
 
 Command: "remove rows where age > 25"
-Response: {"type": "operation", "operation": "filter_rows", "parameters": {"conditions": [{"column": "age", "operator": "gt", "value": 25, "valueType": "number"}], "logic": "AND"}, "explanation": "Remove rows where age > 25"}
+Response: {"type": "operation", "operation": "remove_rows", "parameters": {"conditions": [{"column": "age", "operator": "gt", "value": 25, "valueType": "number"}], "logic": "AND"}, "explanation": "Remove rows where age > 25"}
+
+Command: "keep only male customers"
+Response: {"type": "operation", "operation": "remove_rows", "parameters": {"conditions": [{"column": "gender", "operator": "ne", "value": "male", "valueType": "string"}], "logic": "AND"}, "explanation": "Remove rows where gender is not male"}
 
 Command: "group sales by region and calculate total"
 Response: {"type": "code", "code": "const grouped = data.reduce((acc, row) => { const region = row.region || 'Unknown'; acc[region] = (acc[region] || 0) + (Number(row.sales) || 0); return acc; }, {}); const result = Object.entries(grouped).map(([region, total]) => ({ region, totalSales: total })); return { data: result, headers: ['region', 'totalSales'], changes: { grouped: Object.keys(grouped).length } };", "description": "Group by region and sum sales", "explanation": "Grouping sales data by region and calculating totals"}
-
-Command: "remove duplicates then filter age > 25"
-Response: {"type": "chain", "steps": [{"type": "operation", "operation": "remove_duplicates", "parameters": {}}, {"type": "operation", "operation": "filter_rows", "parameters": {"conditions": [{"column": "age", "operator": "gt", "value": 25, "valueType": "number"}], "logic": "AND"}}], "explanation": "First remove duplicates, then filter rows where age > 25"}
-
-Now analyze the user's command and respond with ONLY valid JSON (no markdown, no code blocks):
 `;
 
       const result = await this.model.generateContent(prompt);
       const response = await result.response;
       const text = response.text();
 
-      // Extract JSON from response
+      // Extract JSON
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
-        
-        // Handle backward compatibility: if no "type" field, assume it's an operation
-        if (!parsed.type) {
-          parsed.type = 'operation';
-        }
-        
-        return {
+        if (!parsed.type) parsed.type = 'operation';
+
+        const output = {
           success: true,
           command: parsed,
-          usedFallback: false
+          usedFallback: false,
+          source: 'ai'
         };
+
+        // Save to cache
+        this.cache.set(cacheKey, output);
+        return output;
       }
 
-      // If can't parse, use fallback
-      console.log('⚠️  Using fallback parser - could not parse AI response');
-      return {
-        success: true,
-        command: this.parseCommandFallback(command),
-        usedFallback: true
-      };
+      throw new Error("Failed to parse AI response JSON");
 
     } catch (error) {
       console.error('❌ AI Command Processing Error:', error.message);
-      console.log('✅ Using fallback rule-based parser');
 
-      // Use fallback on any error
+      // Fallback: If AI fails (Rate limit etc), try to force a simple analysis
       return {
         success: true,
-        command: this.parseCommandFallback(command),
+        command: {
+          operation: 'analyze',
+          parameters: {},
+          explanation: 'Could not understand command (AI Error). Showing analysis.'
+        },
         usedFallback: true
       };
     }
@@ -478,37 +394,48 @@ Keep the explanation concise and easy to understand for non-technical users.
   /**
    * Generate insights with fallback
    */
+  /**
+   * Generate insights with Caching & Optimized Prompt
+   */
   async generateInsights(statistics, sampleData) {
     try {
+      // 1. IMPROVEMENT: Check Cache
+      const cacheKey = this._getCacheKey('insights', statistics);
+      const cached = this.cache.get(cacheKey);
+      if (cached) return cached;
+
       const prompt = `
-You are a data analyst. Analyze the following dataset statistics and provide actionable insights.
+You are a data analyst. Analyze these statistics and provide actionable insights.
 
-Statistics:
-${JSON.stringify(statistics, null, 2)}
+Stats:
+${JSON.stringify(statistics)}
 
-Sample Data (first 5 rows):
-${JSON.stringify(sampleData, null, 2)}
+Sample:
+${JSON.stringify(sampleData)}
 
-Provide:
-1. Key findings from the data
-2. Interesting patterns or trends
-3. Potential data quality issues
-4. Recommendations for further analysis
+Provide concise insights:
+1. Findings
+2. Patterns
+3. Data Quality
+4. Recommendations
 
-Keep insights practical and concise.
+Keep it brief and practical.
 `;
 
       const result = await this.model.generateContent(prompt);
       const response = await result.response;
-
-      return {
+      const output = {
         success: true,
         insights: response.text(),
         usedFallback: false
       };
+
+      // Save to cache
+      this.cache.set(cacheKey, output);
+      return output;
+
     } catch (error) {
       console.error('❌ AI Insights Error:', error.message);
-      console.log('✅ Using fallback insights generator');
 
       return {
         success: true,
@@ -575,40 +502,40 @@ Keep insights practical and concise.
   /**
    * Answer questions about the dataset
    */
+  /**
+   * Answer questions about the dataset with Caffeine & Optimization
+   */
   async answerDatasetQuestion(question, dataContext) {
     try {
+      const cacheKey = this._getCacheKey('qa', question, dataContext.columns.length);
+      const cached = this.cache.get(cacheKey);
+      if (cached) return cached;
+
       const prompt = `
-You are a data analysis assistant. Answer the user's question about their dataset.
+Data Analysis Helper.
+Columns: ${dataContext.columns.join(', ')}
+Stats: ${JSON.stringify(dataContext.statistics)}
+Sample: ${JSON.stringify(dataContext.sampleData)}
 
-Dataset Information:
-- Columns: ${dataContext.columns.join(', ')}
-- Row count: ${dataContext.rowCount}
-- Column types: ${JSON.stringify(dataContext.columnTypes, null, 2)}
+Question: "${question}"
 
-Statistics Summary:
-${JSON.stringify(dataContext.statistics, null, 2)}
-
-Sample Data (first 5 rows):
-${JSON.stringify(dataContext.sampleData, null, 2)}
-
-User Question: "${question}"
-
-Provide a clear, concise answer based on the dataset information. If the answer requires calculation or analysis that you can see in the data, provide it. If you need more specific data analysis, suggest what operation they should run.
-
-Keep your response conversational and helpful.
+Answer concisely based on the data.
 `;
 
       const result = await this.model.generateContent(prompt);
       const response = await result.response;
 
-      return {
+      const output = {
         success: true,
         answer: response.text(),
         usedFallback: false
       };
+
+      this.cache.set(cacheKey, output);
+      return output;
+
     } catch (error) {
       console.error('❌ AI Q&A Error:', error.message);
-      console.log('✅ Using fallback answer generator');
 
       return {
         success: true,
@@ -763,7 +690,7 @@ Rules:
         console.error("No JSON structure found:", text);
         return null;
       }
-      
+
       const jsonStr = cleanText.substring(firstBrace, lastBrace + 1);
       return JSON.parse(jsonStr);
     } catch (error) {
