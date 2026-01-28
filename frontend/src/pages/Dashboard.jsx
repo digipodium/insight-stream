@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useContext } from 'react';
+import { useNavigate } from 'react-router-dom';
 import DataTable from '../components/DataTable';
 import ChartGenerator from '../components/ChartGenerator';
 import HistoryPanel from '../components/HistoryPanel';
@@ -24,6 +25,7 @@ import useUndoRedo from '../hooks/useUndoRedo';
 import { useTheme } from '../context/ThemeContext';
 
 const Dashboard = () => {
+  const navigate = useNavigate();
   const { logout, user } = useContext(AuthContext);
   const {
     currentDataset,
@@ -373,6 +375,15 @@ const Dashboard = () => {
               )}
             </div>
             <div className="flex items-center gap-4">
+              {user && user.isAdmin && (
+                <button
+                  onClick={() => navigate('/admin')}
+                  className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/20 rounded-lg hover:bg-purple-100 dark:hover:bg-purple-900/30 transition-colors"
+                >
+                  <LayoutDashboard className="w-4 h-4" />
+                  <span className="hidden sm:inline">Admin Dashboard</span>
+                </button>
+              )}
               <button
                 onClick={() => setShowHistory(true)}
                 className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors"

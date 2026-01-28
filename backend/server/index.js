@@ -6,6 +6,7 @@ const cors = require('cors');
 const llmRoutes = require('./routes/llmRoutes');
 const dataRoutes = require('./routes/dataRoutes');
 const authRoutes = require('./routes/authRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 const connectDB = require('./config/db');
 
 const app = express();

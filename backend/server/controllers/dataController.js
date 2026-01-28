@@ -4,7 +4,10 @@ const llmService = require('../services/llmService');
 const codeExecutorService = require('../services/codeExecutorService');
 const operationRegistry = require('../services/operationRegistry');
 const Dataset = require('../models/Dataset');
+const Dataset = require('../models/Dataset');
 const ExcelJS = require('exceljs');
+const { logPrompt } = require('../services/promptLogger');
+const SystemConfig = require('../models/SystemConfig');
 
 // Helper function to normalize operation names
 const normalizeOperation = (operation) => {
@@ -95,6 +98,20 @@ exports.uploadCSV = async (req, res) => {
       });
     }
 
+    // Check dynamic file size limit
+    const config = await SystemConfig.findOne({ key: 'maxFileSize' });
+    const maxMB = config ? config.value : 10; // Default 10MB
+    const fileSizeMB = req.file.size / (1024 * 1024);
+
+    if (fileSizeMB > maxMB) {
+      // Remove file
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({
+        success: false,
+        message: `File size exceeds the limit of ${maxMB}MB`
+      });
+    }
+
     // Parse CSV
     const parsedData = await dataProcessingService.parseCSV(req.file.path);
 
@@ -174,6 +191,9 @@ exports.processCommand = async (req, res) => {
     // Check ownership
     // Optional: if (dataset.user.toString() !== req.user.id) return res.status(401)...;
 
+    // Log prompt
+    await logPrompt(req.user._id, 'process', command);
+
     // Parse command using LLM (with fallback)
     const commandResult = await llmService.processDataCommand(command, {
       columns: dataset.headers,
@@ -193,17 +213,17 @@ exports.processCommand = async (req, res) => {
           columnTypes: dataset.columnTypes,
           sampleData: dataset.data.slice(0, 3)
         });
-        
+
         if (codeResult.success) {
           console.log('✅ Generated code as fallback');
           const executionResult = await executeCode(codeResult.code, dataset.data, dataset.headers);
-          
+
           if (executionResult.success) {
             dataset.data = executionResult.data;
             dataset.headers = executionResult.headers || dataset.headers;
             dataset.rowCount = executionResult.data.length;
             await dataset.save();
-            
+
             return res.json({
               success: true,
               type: 'code',
@@ -220,7 +240,7 @@ exports.processCommand = async (req, res) => {
       } catch (fallbackError) {
         console.error('Fallback code generation also failed:', fallbackError);
       }
-      
+
       return res.status(400).json({
         success: false,
         message: 'Could not understand command',
@@ -235,7 +255,7 @@ exports.processCommand = async (req, res) => {
 
     const commandPlan = commandResult.command;
     console.log('🔧 Command Plan:', JSON.stringify(commandPlan, null, 2));
-    
+
     // Execute based on plan type
     let executionResult;
     let operations = [];
@@ -254,11 +274,11 @@ exports.processCommand = async (req, res) => {
       // Execute standard operation
       const operation = normalizeOperation(commandPlan.operation);
       console.log('⚙️  Executing operation:', operation);
-      
+
       // Validate filter_rows operation has conditions
       if (operation === 'filter_rows') {
-        if (!commandPlan.parameters || !commandPlan.parameters.conditions || 
-            commandPlan.parameters.conditions.length === 0) {
+        if (!commandPlan.parameters || !commandPlan.parameters.conditions ||
+          commandPlan.parameters.conditions.length === 0) {
           return res.status(400).json({
             success: false,
             message: 'Could not parse filter conditions from your command',
@@ -268,7 +288,7 @@ exports.processCommand = async (req, res) => {
           });
         }
       }
-      
+
       executionResult = await executeOperation(operation, commandPlan.parameters, dataset.data, dataset.headers, dataset.columnTypes);
       operations = [{ type: operation, details: executionResult.changes || {} }];
     } else {
@@ -276,7 +296,7 @@ exports.processCommand = async (req, res) => {
       const rawOperation = commandPlan.operation || commandPlan.type;
       const operation = normalizeOperation(rawOperation);
       console.log('⚙️  Executing legacy operation:', operation);
-      
+
       executionResult = await executeOperation(operation, commandPlan.parameters, dataset.data, dataset.headers, dataset.columnTypes);
       if (executionResult && executionResult.success) {
         operations = [{ type: operation, details: executionResult.changes || {} }];
@@ -315,12 +335,12 @@ exports.processCommand = async (req, res) => {
     dataset.data = executionResult.data;
     dataset.headers = executionResult.headers || dataset.headers;
     dataset.rowCount = executionResult.data.length;
-    
+
     // Update column types if headers changed
     if (executionResult.headers && executionResult.headers.length > 0 && executionResult.data.length > 0) {
       dataset.columnTypes = dataProcessingService.detectColumnTypes(executionResult.data, executionResult.headers);
     }
-    
+
     await dataset.save();
 
     console.log('💬 Generating explanation...');
@@ -361,7 +381,7 @@ exports.processCommand = async (req, res) => {
  */
 async function executeOperation(operation, parameters, data, headers, columnTypes) {
   const op = operationRegistry.get(operation);
-  
+
   if (!op) {
     return {
       success: false,
@@ -409,7 +429,7 @@ async function executeCode(code, data, headers) {
 
   // Execute code
   const result = codeExecutorService.executeCode(code, data, headers);
-  
+
   if (!result.success) {
     return {
       success: false,
@@ -442,7 +462,7 @@ async function executeChain(steps, data, headers, columnTypes) {
     console.log(`   Step ${i + 1}/${steps.length}: ${step.type}`);
 
     let stepResult;
-    
+
     if (step.type === 'operation') {
       stepResult = await executeOperation(step.operation, step.parameters, currentData, currentHeaders, columnTypes);
       operations.push({ type: step.operation, details: stepResult.changes || {} });
@@ -712,6 +732,9 @@ exports.askQuestion = async (req, res) => {
     // Get AI answer
     const result = await llmService.answerDatasetQuestion(question, dataContext);
 
+    // Log prompt
+    await logPrompt(req.user._id, 'ask', question, 0, { dataId });
+
     if (!result.success) {
       return res.status(500).json({
         success: false,
@@ -967,7 +990,7 @@ exports.generateFormula = async (req, res) => {
     if (applyResult.newColumn && applyResult.data.length > 0) {
       const sampleValue = applyResult.data[0][applyResult.newColumn];
       if (sampleValue !== undefined) {
-        dataset.columnTypes[applyResult.newColumn] = 
+        dataset.columnTypes[applyResult.newColumn] =
           typeof sampleValue === 'number' ? 'number' : 'text';
       }
     }
@@ -1089,7 +1112,7 @@ exports.manipulateColumn = async (req, res) => {
     if (transformResult.columnName) {
       const sampleValue = transformResult.data[0]?.[transformResult.columnName];
       if (sampleValue !== undefined) {
-        dataset.columnTypes[transformResult.columnName] = 
+        dataset.columnTypes[transformResult.columnName] =
           typeof sampleValue === 'number' ? 'number' : 'text';
       }
     }
@@ -1358,7 +1381,7 @@ exports.detectAnomalies = async (req, res) => {
       anomalies: anomalies,
       count: anomalies.length,
       explanations: explanationResult.success ? explanationResult.explanations : null,
-      summary: explanationResult.success ? explanationResult.explanations?.summary : 
+      summary: explanationResult.success ? explanationResult.explanations?.summary :
         (anomalies.length > 0 ? `${anomalies.length} anomalies detected. Review the data for outliers, missing values, and duplicates.` : 'No significant anomalies detected.'),
       aiPowered: explanationResult.success && !explanationResult.usedFallback
     });
